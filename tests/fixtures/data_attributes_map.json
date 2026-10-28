@@ -1,0 +1,14 @@
+{
+  "173": {
+    "code": "mcV",
+    "dataType": "float",
+    "description": "Minimum cell voltage",
+    "formatWithUnit": "%.2F V"
+  },
+  "174": {
+    "code": "McV",
+    "dataType": "float",
+    "description": "Maximum cell voltage",
+    "formatWithUnit": "%.2F V"
+  }
+}

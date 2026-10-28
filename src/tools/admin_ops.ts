@@ -5,9 +5,11 @@ import {
   WRITE_ANNOTATIONS,
   confirmSchema,
   formatVrmError,
+  instanceSchema,
   requireConfirm,
   resolveAuth,
 } from './helpers.js';
+import { formatDataAttributeCatalog } from './present.js';
 import type { QueryValue } from '../vrm/client.js';
 import { outputSchemas } from './output_schemas.js';
 
@@ -36,7 +38,7 @@ export function registerAdminOpsTools(server: McpServer): void {
         count: z.number().int().min(1).max(1000).optional().describe('Records per page (1-1000).'),
         query: passthroughQuerySchema,
       },
-      outputSchema: outputSchemas.successWithRecords,
+      outputSchema: outputSchemas.dataAttributeCatalog,
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ page, count, query }, extra) => {
@@ -54,14 +56,8 @@ export function registerAdminOpsTools(server: McpServer): void {
           }
         }
         const data = await auth.client.get<GenericResponse>('/data-attributes', q);
-        const records = (data as { records?: unknown[] }).records ?? [];
-        const lines = [
-          `# Data attributes`,
-          '',
-          `${Array.isArray(records) ? records.length : 0} record(s)${page !== undefined ? ` on page ${page}` : ''}.`,
-        ];
         return {
-          content: [{ type: 'text', text: lines.join('\n') }],
+          content: [{ type: 'text', text: formatDataAttributeCatalog(data, page) }],
           structuredContent: data as unknown as Record<string, unknown>,
         };
       } catch (error) {
@@ -225,7 +221,7 @@ export function registerAdminOpsTools(server: McpServer): void {
                 .max(16)
                 .regex(/^(0x[0-9A-Fa-f]+|[0-9]+)$/)
                 .describe('Product ID, hex with 0x prefix (e.g. "0xC00A") or decimal.'),
-              instance: z.number().int().min(0).max(255).describe('Device instance number.'),
+              instance: instanceSchema,
               customName: z.string().max(128).optional().describe('Optional custom display name.'),
               updatedAt: z.number().int().min(0).optional().describe('Unix timestamp (seconds) of last device update.'),
             }),

@@ -1,0 +1,38 @@
+{
+  "success": true,
+  "records": [
+    {
+      "id": 1,
+      "idSite": 219742,
+      "timestamp": 1793190000,
+      "Device": "Pylontech battery",
+      "instance": 512,
+      "idDataAttribute": 173,
+      "description": "Minimum cell voltage",
+      "formatWithUnit": "%.2F V",
+      "dbusServiceType": "battery",
+      "dbusPath": "/System/MinCellVoltage",
+      "code": "mcV",
+      "bitmask": 0,
+      "formattedValue": "3.20 V",
+      "rawValue": "3.20"
+    },
+    {
+      "id": 2,
+      "idSite": 219742,
+      "timestamp": 1793190000,
+      "Device": "Pylontech battery",
+      "instance": 512,
+      "idDataAttribute": 174,
+      "description": "Maximum cell voltage",
+      "formatWithUnit": "%.2F V",
+      "dbusServiceType": "battery",
+      "dbusPath": "/System/MaxCellVoltage",
+      "code": "McV",
+      "bitmask": 0,
+      "formattedValue": "3.35 V",
+      "rawValue": 3.35
+    }
+  ],
+  "num_records": 2
+}

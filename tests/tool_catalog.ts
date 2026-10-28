@@ -34,6 +34,7 @@ export const TOOLS: ToolSpec[] = [
   // Installation reads (8)
   { name: 'vrm_get_system_overview', destructive: false, minimalArgs: { idSite: 1 } },
   { name: 'vrm_get_diagnostics', destructive: false, minimalArgs: { idSite: 1 } },
+  { name: 'vrm_battery_cell_spread', destructive: false, minimalArgs: { idSite: 1 } },
   { name: 'vrm_get_stats', destructive: false, minimalArgs: { idSite: 1 } },
   { name: 'vrm_get_overallstats', destructive: false, minimalArgs: { idSite: 1 } },
   { name: 'vrm_get_alarms', destructive: false, minimalArgs: { idSite: 1 } },

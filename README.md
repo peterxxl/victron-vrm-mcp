@@ -1,8 +1,8 @@
 # Victron VRM MCP — MCP Server
 
-MCP server for Victron Energy's [VRM cloud API](https://vrmapi.victronenergy.com/v2/docs). Exposes 53 VRM tools over Streamable HTTP — ready for the [Anthropic MCP Connector API](https://platform.claude.com/docs/en/agents-and-tools/mcp-connector) and any HTTP-capable MCP client.
+MCP server for Victron Energy's [VRM cloud API](https://vrmapi.victronenergy.com/v2/docs). Exposes 54 VRM tools over Streamable HTTP — ready for the [Anthropic MCP Connector API](https://platform.claude.com/docs/en/agents-and-tools/mcp-connector) and any HTTP-capable MCP client.
 
-> 53 tools | Streamable HTTP | Security-first | 506 tests (415 offline + 91 live) | MCP Connector compatible
+> 54 tools | Streamable HTTP | Security-first | MCP Connector compatible
 
 ---
 
@@ -128,7 +128,7 @@ Call `vrm_list_installations` first — it returns every site the token can acce
 
 ## Tools
 
-53 tools covering 88+ VRM operations (53 direct + 35+ widget endpoints via the generic `vrm_widget` dispatcher). Every destructive tool is `confirm: true` gated; every tool declares `inputSchema`, `outputSchema`, and MCP annotations.
+54 tools covering 88+ VRM operations (54 direct + 35+ widget endpoints via the generic `vrm_widget` dispatcher). Every destructive tool is `confirm: true` gated; every tool declares `inputSchema`, `outputSchema`, and MCP annotations.
 
 <details>
 <summary><strong>Discovery & Lookup (4 tools)</strong></summary>
@@ -143,12 +143,13 @@ Call `vrm_list_installations` first — it returns every site the token can acce
 </details>
 
 <details>
-<summary><strong>Monitoring — reads (11 tools)</strong></summary>
+<summary><strong>Monitoring — reads (12 tools)</strong></summary>
 
 | Tool | Description |
 |------|-------------|
 | `vrm_get_system_overview` | Connected devices + roles for a site |
 | `vrm_get_diagnostics` | Per-device last-known attribute values |
+| `vrm_battery_cell_spread` | Min/max cell voltage, spread in mV, largest simultaneous spread, and latest SOC over a window (default 24 h). GET only |
 | `vrm_get_stats` | Time-series stats (15min/hours/days/weeks/months/years) |
 | `vrm_get_overallstats` | Lifetime aggregate stats |
 | `vrm_get_alarms` | Configured alarms, devices, notification users, available attributes |
@@ -400,7 +401,7 @@ npm run test:live  # 91 extra tests against VRM's public demo tenant (needs netw
 | `tests/client.test.ts` | Token-length guard, scheme forwarding, array query encoding, host pin, 4xx → `VrmApiError`, 429 Retry-After, binary download round-trip |
 | `tests/logger.test.ts` | Auto-redaction of `token`/`authorization` keys (case-insensitive) |
 | `tests/http.test.ts` | End-to-end HTTP: 404/405/401/403/406/415/400/200, Origin validation, confirm gate, skip header |
-| `tests/tools.coverage.test.ts` | Every one of the 53 tools has correct shape + annotations; every destructive tool refuses without confirm AND passes with skip header |
+| `tests/tools.coverage.test.ts` | Every one of the 54 tools has correct shape + annotations; every destructive tool refuses without confirm AND passes with skip header |
 | `tests/outputSchema.test.ts` | Every tool declares `outputSchema` with ≥1 property; description hygiene (length, endpoint mention, no injection markers, destructive tools name the hazard) |
 | `tests/regressions.test.ts` | Specific bug locks: skip-confirms bypass, firmwares required params, binary download, path traversal rejection, widget-name regex, limit bounds |
 | `tests/fuzz.test.ts` | Malformed JSON, 1 MB body, unicode/control-char/XSS/SQL-injection strings, array length limits, content-type edge cases, token-leak sentinel |
@@ -416,7 +417,7 @@ CI: `.github/workflows/ci.yml` runs the full suite with coverage thresholds (80%
 ## Roadmap
 
 Shipped:
-- [x] 53 tools covering 88+ VRM operations
+- [x] 54 tools covering 88+ VRM operations
 - [x] Streamable HTTP transport + MCP Connector API support
 - [x] Security hardening (Origin/Accept/Content-Type/Protocol-Version, token redaction, confirm gates, site allowlist, base-URL pin)
 - [x] `outputSchema` on every tool

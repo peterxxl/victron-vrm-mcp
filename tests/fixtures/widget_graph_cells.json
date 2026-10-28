@@ -1,0 +1,26 @@
+{
+  "success": true,
+  "records": {
+    "data": {
+      "173": [[1793188867, 3.32, 3.32, 3.32, null], [1793188927, 3.3, 3.3, 3.3, null]],
+      "174": [[1793188867, 3.34, 3.34, 3.34, null], [1793188927, 3.35, 3.35, 3.35, null]]
+    },
+    "meta": {
+      "173": {
+        "code": "mcV",
+        "description": "Minimum cell voltage",
+        "formatValueOnly": "%.2F",
+        "formatWithUnit": "%.2F V",
+        "axisGroup": null
+      },
+      "174": {
+        "code": "McV",
+        "description": "Maximum cell voltage",
+        "formatValueOnly": "%.2F",
+        "formatWithUnit": "%.2F V",
+        "axisGroup": null
+      }
+    },
+    "instance": 1
+  }
+}

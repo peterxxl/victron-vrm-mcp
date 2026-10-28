@@ -127,6 +127,43 @@ describe('Live VRM demo — discovery + monitoring', () => {
       end: now,
     });
     expect(text).toMatch(/Series fetched: \d+/);
+    expect(text).toMatch(/min: /);
+    expect(text).toMatch(/max: /);
+    expect(text).toMatch(/last: /);
+  });
+
+  it('vrm_widget LithiumBMS on a Lynx instance includes cell voltage values', async () => {
+    const { text, isError } = await callTool('vrm_widget', { idSite: 151755, widget: 'LithiumBMS', instance: 1 });
+    expect(isError).toBeFalsy();
+    expect(text).toMatch(/value=[\d.]+ unit=V formatted=/);
+    expect(text).toMatch(/`mcV`/);
+    expect(text).toMatch(/`McV`/);
+  });
+
+  it('vrm_widget_graph accepts Pylontech instance 512', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const { text, isError } = await callTool('vrm_widget_graph', {
+      idSite: 219742,
+      instance: 512,
+      attributeCodes: ['bv', 'SOC'],
+      start: now - 3600,
+      end: now,
+    });
+    expect(text).not.toMatch(/Too big|65535/);
+    expect(isError).toBeFalsy();
+    expect(text).toMatch(/Instance: 512/);
+  });
+
+  it('vrm_battery_cell_spread is GET-only and does not fail output validation', async () => {
+    const { text, isError } = await callTool('vrm_battery_cell_spread', { idSite: 151755, hours: 1 });
+    expect(text).not.toMatch(/Output validation|does not match the tool's output schema/);
+    // Demo tokens cannot read /diagnostics (403). A permitted token returns the spread.
+    expect(text.length).toBeGreaterThan(0);
+    if (isError) {
+      expect(text).toMatch(/VRM API error 403/);
+    } else {
+      expect(text).toMatch(/Battery cell spread/);
+    }
   });
 
   it('vrm_widget_generator_state returns success', async () => {

@@ -56,8 +56,8 @@ export function registerDataAttributesTools(server: McpServer): void {
           qp,
         );
 
-        const records = data.records ?? [];
-        const attrs = data.attributes ?? [];
+        const records = Array.isArray(data.records) ? data.records : [];
+        const attrs = Array.isArray(data.attributes) ? data.attributes : [];
 
         const lines: string[] = [
           `# Data-attribute search: \`${query}\``,

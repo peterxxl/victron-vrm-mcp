@@ -4,7 +4,7 @@ Guidance for Claude Code working in this repository.
 
 ## What this is
 
-MCP server for Victron Energy's **VRM cloud API**, exposing 53 tools over **Streamable HTTP**. v0.5.0.
+MCP server for Victron Energy's **VRM cloud API**, exposing 54 tools over **Streamable HTTP**. v0.5.0.
 
 ⚠️ **npm skips 0.4.0.** v0.4.0 was tagged and GitHub-released on 2026-05-14 but never published to the registry, so npm goes 0.3.0 → 0.5.0. Check `npm view victron-vrm-mcp version` against `git tag` before assuming a tag means a release.
 
@@ -26,11 +26,11 @@ npm ci
 npm run build          # tsc -> dist/
 npm test               # build + full vitest run
 npm run test:unit      # fast subset: helpers, client, logger, rate_limit, http_guards
-npm run test:live      # 91 live tests against VRM's demo tenant — network, not part of CI
+npm run test:live      # live tests against VRM's demo tenant — network, not part of CI
 npm run inspect        # @modelcontextprotocol/inspector
 ```
 
-**415 offline tests across 16 files, plus 91 live tests, all passing** (verified 2026-08-14). `tests/handlers.test.ts` runs every tool handler in-process against a stubbed VRM (fixtures from `tests/fixtures/`); the shared tool catalog lives in `tests/tool_catalog.ts` — update it when adding or removing a tool. CI enforces coverage thresholds on `src/` (80% lines / 72% branches) via `npm run test:coverage`.
+**Offline tests** (19 files, `tests/live.test.ts` excluded) plus live tests against the demo tenant. `tests/handlers.test.ts` runs every tool handler in-process against a stubbed VRM (fixtures from `tests/fixtures/`); the shared tool catalog lives in `tests/tool_catalog.ts` — update it when adding or removing a tool. CI enforces coverage thresholds on `src/` (80% lines / 72% branches) via `npm run test:coverage`.
 
 **The default run is offline by construction.** `vitest.config.ts` excludes `tests/live.test.ts`, and `npm run test:live` reaches it through its own `vitest.live.config.ts`. A CLI `--exclude` cannot express this — vitest *appends* that flag to the config's exclude list rather than replacing it, so `vitest run --exclude … tests/live.test.ts` silently runs zero tests.
 
@@ -75,11 +75,11 @@ src/
   rate_limit.ts   rate limiting
   logger.ts
   vrm/            client.ts, types.ts — VRM API client
-  tools/          53 tools: installations, reads, site_writes, alarms, users,
+  tools/          54 tools: installations, reads, site_writes, alarms, users,
                   widgets, tags, admin, admin_ops, auth, accesstokens,
                   capabilities, data_attributes, custom_widget, output_schemas,
-                  user_ops, helpers
-tests/            16 offline files incl. handlers, fuzz, pagination, regressions,
+                  user_ops, helpers, battery, present
+tests/            offline files incl. handlers, fuzz, pagination, regressions,
                   worker — plus live.test.ts, run only via npm run test:live
 evals/            evaluation harness
 ```

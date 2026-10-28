@@ -26,20 +26,17 @@ export function registerCapabilitiesTools(server: McpServer): void {
           .optional()
           .describe('Whether to probe an admin endpoint to confirm admin-tier access. Default: true. Skip with false to avoid the extra round-trip if you only need the user identity.'),
       },
-      outputSchema: {
-        ...outputSchemas.success,
-        user: z
-          .object({
-            id: z.number(),
-            name: z.string().optional(),
-            email: z.string().optional(),
-            country: z.string().optional(),
-            accessLevel: z.number().optional(),
-          })
-          .passthrough(),
+      outputSchema: outputSchemas.success.extend({
+        user: z.looseObject({
+          id: z.number(),
+          name: z.string().optional(),
+          email: z.string().optional(),
+          country: z.string().optional(),
+          accessLevel: z.number().optional(),
+        }),
         isAdmin: z.boolean(),
         tokenValid: z.boolean(),
-      },
+      }),
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ probeAdmin }, extra) => {
