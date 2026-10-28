@@ -9,6 +9,7 @@ import {
   numericValue,
   seriesForCode,
   spreadMillivolts,
+  voltageAt,
   type DiagnosticRecord,
 } from '../src/tools/battery.js';
 import { parseSeries } from '../src/tools/present.js';
@@ -128,7 +129,36 @@ describe('spread math', () => {
     expect(spread.largestSimultaneousSpreadMv).toBe(300);
     expect(spread.largestSimultaneousSpreadAt).toBe(200);
     expect(spread.alignedSamples).toBe(3);
+    expect(spread.bucketSeconds).toBe(100);
+    expect(spread.simultaneousSpreadUpperBound).toBe(true);
     expect(spreadMillivolts(0.05)).toBe(50);
+  });
+
+  it('uses bucket min of mcV and bucket max of McV, and keeps the cell id string', () => {
+    const min = parseSeries([
+      [0, 3.0, 2.78, 3.1, '0103'],
+      [900, 3.1, 2.93, 3.2, '0104'],
+    ]);
+    const max = parseSeries([
+      [0, 3.4, 3.3, 3.56, '0201'],
+      [900, 3.4, 3.34, 3.53, '0202'],
+    ]);
+    expect(min[0]?.cellId).toBe('0103');
+    expect(min[0]?.low).toBe(2.78);
+    expect(max[0]?.high).toBe(3.56);
+    const spread = computeSpread(min, max, null, null);
+    expect(spread.minCellVoltageV).toBe(2.78);
+    expect(spread.maxCellVoltageV).toBe(3.56);
+    expect(spread.spreadMv).toBe(780);
+    expect(spread.minCellId).toBe('0103');
+    expect(spread.maxCellId).toBe('0201');
+    expect(spread.largestSimultaneousSpreadMv).toBe(780);
+    expect(spread.worstMinCellId).toBe('0103');
+    expect(spread.worstMaxCellId).toBe('0201');
+    expect(spread.bucketSeconds).toBe(900);
+    expect(spread.simultaneousSpreadUpperBound).toBe(true);
+    const volts = parseSeries([[0, 52.4], [900, 51.1]]);
+    expect(voltageAt(volts, 0)).toBe(52.4);
   });
 
   it('pairs the nearest sample within two minutes when timestamps differ', () => {
@@ -186,10 +216,18 @@ describe('cell spread text', () => {
           alignedSamples: 3,
           seriesSamples: { min: 3, max: 3 },
           source: 'graph',
+          bucketSeconds: 900,
+          simultaneousSpreadUpperBound: true,
+          minCellId: '0103',
+          maxCellId: '0201',
+          worstMinCellId: '0103',
+          worstMaxCellId: '0201',
           latestMinCellVoltageV: 3.2,
           latestMaxCellVoltageV: 3.35,
           latestSpreadMv: 150,
           latestTimestamp: 1000,
+          latestBatteryVoltageV: 49.12,
+          worstBatteryVoltageV: 52.4,
           soc: 59,
           socFormatted: '59.0 %',
           socCode: 'SOC',
@@ -202,7 +240,54 @@ describe('cell spread text', () => {
     expect(text).toMatch(/min cell voltage: 3\.1 V at /);
     expect(text).toMatch(/spread: 300 mV/);
     expect(text).toMatch(/largest simultaneous spread: 300 mV/);
+    expect(text).toMatch(/upper bound/);
+    expect(text).toMatch(/bucket resolution: 900 s/);
+    expect(text).toMatch(/cell 0103/);
+    expect(text).toMatch(/cell 0201/);
+    expect(text).toMatch(/battery voltage at worst spread: 52\.4 V/);
+    expect(text).toMatch(/latest battery voltage: 49\.12 V/);
     expect(text).toMatch(/latest SOC: 59\.0 % \(code SOC, instance 512\)/);
+    const zoned = formatBatterySpreadText({
+      idSite: 216772,
+      hours: 168,
+      diagnosticsRecords: 4,
+      truncated: false,
+      timeZone: 'Europe/Prague',
+      batteries: [
+        {
+          instance: 512,
+          device: 'Pylontech battery',
+          minCellVoltageV: 2.78,
+          minCellVoltageAt: 100,
+          maxCellVoltageV: 3.56,
+          maxCellVoltageAt: 100,
+          spreadMv: 780,
+          largestSimultaneousSpreadMv: 780,
+          largestSimultaneousSpreadAt: 100,
+          alignedSamples: 1,
+          seriesSamples: { min: 2, max: 2 },
+          source: 'graph',
+          bucketSeconds: 900,
+          simultaneousSpreadUpperBound: true,
+          minCellId: '0103',
+          maxCellId: '0201',
+          worstMinCellId: '0103',
+          worstMaxCellId: '0201',
+          latestMinCellVoltageV: 3.2,
+          latestMaxCellVoltageV: 3.35,
+          latestSpreadMv: 150,
+          latestTimestamp: 1000,
+          latestBatteryVoltageV: 49.12,
+          worstBatteryVoltageV: 52.4,
+          soc: 59,
+          socFormatted: '59.0 %',
+          socCode: 'SOC',
+          socInstance: 512,
+        },
+      ],
+    });
+    expect(zoned).toMatch(/Timezone: Europe\/Prague/);
+    expect(zoned).toMatch(/Europe\/Prague/);
     expect(formatBatterySpreadText({ idSite: 1, hours: 24, diagnosticsRecords: 0, truncated: true, batteries: [] })).toMatch(
       /truncated/,
     );

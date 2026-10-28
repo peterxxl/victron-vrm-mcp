@@ -10,6 +10,7 @@ import {
   sitePath,
 } from './helpers.js';
 import { formatGraphText, formatWidgetText } from './present.js';
+import { lookupSiteTimeZone } from './site_time.js';
 import type { QueryValue, VrmClient } from '../vrm/client.js';
 import { outputSchemas } from './output_schemas.js';
 
@@ -92,9 +93,10 @@ export function registerWidgetsTools(server: McpServer): void {
         }
 
         const data = await fetchWidget<VrmGraphResponse>(auth.client, idSite, 'Graph', query);
+        const timeZone = await lookupSiteTimeZone(auth.client, idSite);
 
         return {
-          content: [{ type: 'text', text: formatGraphText(idSite, data, { includePoints }) }],
+          content: [{ type: 'text', text: formatGraphText(idSite, data, { includePoints, timeZone }) }],
           structuredContent: data as unknown as Record<string, unknown>,
         };
       } catch (error) {
@@ -131,8 +133,9 @@ export function registerWidgetsTools(server: McpServer): void {
           start,
           end,
         });
+        const timeZone = await lookupSiteTimeZone(auth.client, idSite);
         return {
-          content: [{ type: 'text', text: formatWidgetText(idSite, widget, data) }],
+          content: [{ type: 'text', text: formatWidgetText(idSite, widget, data, { timeZone }) }],
           structuredContent: data as unknown as Record<string, unknown>,
         };
       } catch (error) {
@@ -168,9 +171,10 @@ export function registerWidgetsTools(server: McpServer): void {
           start,
           end,
         });
+        const timeZone = await lookupSiteTimeZone(auth.client, idSite);
 
         return {
-          content: [{ type: 'text', text: formatWidgetText(idSite, 'GeneratorState', data) }],
+          content: [{ type: 'text', text: formatWidgetText(idSite, 'GeneratorState', data, { timeZone }) }],
           structuredContent: data as unknown as Record<string, unknown>,
         };
       } catch (error) {

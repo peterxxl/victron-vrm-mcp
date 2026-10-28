@@ -31,6 +31,10 @@ describe('unit and timestamp formatting', () => {
   it('formats unix seconds and milliseconds as ISO', () => {
     expect(formatTimestamp(1793188867)).toBe(new Date(1793188867 * 1000).toISOString());
     expect(formatTimestamp(1793105669000)).toBe(new Date(1793105669000).toISOString());
+    const local = formatTimestamp(1793188867, 'Europe/Prague');
+    expect(local.startsWith(new Date(1793188867 * 1000).toISOString())).toBe(true);
+    expect(local).toMatch(/Europe\/Prague/);
+    expect(formatTimestamp(1793188867, 'Not/AZone')).toBe(new Date(1793188867 * 1000).toISOString());
   });
 
   it('trims noisy floats', () => {
@@ -42,7 +46,7 @@ describe('unit and timestamp formatting', () => {
 describe('graph text', () => {
   it('keeps the primary value and the bucket extremes when a point ends in null', () => {
     const parsed = parseSeriesPoint([1793188867, 3.32, 3.1, 3.4, null]);
-    expect(parsed).toEqual({ ts: 1793188867, value: 3.32, low: 3.1, high: 3.4 });
+    expect(parsed).toEqual({ ts: 1793188867, value: 3.32, low: 3.1, high: 3.4, cellId: null });
     expect(parseSeriesPoint([1])).toBeNull();
     expect(parseSeriesPoint([1, null, null])).toBeNull();
   });
@@ -60,6 +64,19 @@ describe('graph text', () => {
     expect(text).toMatch(/max: 3\.35 V at /);
     expect(text).toMatch(/compact \(2 of 2\)/);
     expect(text).not.toMatch(/structured payload/);
+  });
+
+  it('keeps a string cell id on useMinMax points and shows it next to the extreme', () => {
+    const parsed = parseSeriesPoint([1793188867, 3.0, 2.78, 3.1, '0103']);
+    expect(parsed?.cellId).toBe('0103');
+    expect(parsed?.low).toBe(2.78);
+    expect(parsed?.high).toBe(3.1);
+    expect(parsed?.value).toBe(3);
+    const text = formatGraphText(216772, fixture('widget_graph_cell_id'), { timeZone: 'Europe/Prague' });
+    expect(text).toMatch(/Timezone: Europe\/Prague/);
+    expect(text).toMatch(/min: 2\.78 V at .+Europe\/Prague\) cell 0103/);
+    expect(text).toMatch(/max: 3\.56 V at .+cell 0201/);
+    expect(text).toContain('#0103');
   });
 
   it('lists every sample when includePoints is set, and caps the dump', () => {
@@ -153,7 +170,7 @@ describe('overview, diagnostics, stats, and attribute catalog text', () => {
       success: true,
       records: [
         { code: 'V', instance: 0, description: 'Voltage', rawValue: 50, formattedValue: '50 V', Device: 'Shunt' },
-        { code: 'mcV', instance: 512, description: 'Minimum cell voltage', rawValue: '3.20', formattedValue: '3.20 V', Device: 'Pylontech battery' },
+        { code: 'mcV', instance: 512, description: 'Minimum cell voltage', rawValue: '3.20', formattedValue: '3.20 V', Device: 'Pylontech battery', timestamp: 1793190000 },
       ],
     };
     const text = formatDiagnosticsText(219742, payload);
@@ -164,6 +181,10 @@ describe('overview, diagnostics, stats, and attribute catalog text', () => {
     expect(mc).toBeLessThan(voltage);
     expect(text).toMatch(/instance 512 Pylontech battery `mcV`/);
     expect(text).toMatch(/raw=3\.2/);
+    expect(text).toMatch(/at 2026-/);
+    const zoned = formatDiagnosticsText(219742, payload, { timeZone: 'Europe/Prague' });
+    expect(zoned).toMatch(/Timezone: Europe\/Prague/);
+    expect(zoned).toMatch(/Europe\/Prague/);
     expect(formatDiagnosticsText(1, { records: { code: 'SOC', instance: 1, rawValue: 80 } })).toMatch(/Diagnostic entries: 1/);
   });
 

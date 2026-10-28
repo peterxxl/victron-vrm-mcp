@@ -11,6 +11,7 @@ import {
 import type { QueryValue } from '../vrm/client.js';
 import { outputSchemas } from './output_schemas.js';
 import { formatDiagnosticsText, formatOverviewText, formatStatsText } from './present.js';
+import { lookupSiteTimeZone } from './site_time.js';
 
 interface GenericRead {
   success: boolean;
@@ -66,8 +67,9 @@ export function registerReadsTools(server: McpServer): void {
       try {
         assertSiteAllowed(idSite);
         const data = await auth.client.get<GenericRead>(sitePath(idSite, 'diagnostics'));
+        const timeZone = await lookupSiteTimeZone(auth.client, idSite);
         return {
-          content: [{ type: 'text', text: formatDiagnosticsText(idSite, data) }],
+          content: [{ type: 'text', text: formatDiagnosticsText(idSite, data, { timeZone }) }],
           structuredContent: data as unknown as Record<string, unknown>,
         };
       } catch (error) {
@@ -112,8 +114,9 @@ export function registerReadsTools(server: McpServer): void {
           query['attributeCodes[]'] = attributeCodes;
         }
         const data = await auth.client.get<GenericRead>(sitePath(idSite, 'stats'), query);
+        const timeZone = await lookupSiteTimeZone(auth.client, idSite);
         return {
-          content: [{ type: 'text', text: formatStatsText(idSite, data) }],
+          content: [{ type: 'text', text: formatStatsText(idSite, data, { timeZone }) }],
           structuredContent: data as unknown as Record<string, unknown>,
         };
       } catch (error) {

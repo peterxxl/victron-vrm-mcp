@@ -19,7 +19,12 @@ function open<T extends z.ZodRawShape>(shape: T) {
   return z.looseObject(shape);
 }
 
-const graphPoint = z.array(z.union([z.number(), z.null()]));
+/**
+ * A graph sample is `[timestamp, value, …]`. With useMinMax, VRM appends the
+ * bucket min, bucket max, and sometimes a string cell id such as "0103"
+ * (or null). Extra elements are string | number | null.
+ */
+const graphPoint = z.array(z.union([z.number(), z.string(), z.null()]));
 
 const deviceSummary = z.looseObject({
   name: z.string().nullable().optional(),
@@ -264,10 +269,18 @@ export const outputSchemas = {
           max: z.number(),
         }),
         source: z.enum(['graph', 'diagnostics']),
+        bucketSeconds: z.number().nullable(),
+        simultaneousSpreadUpperBound: z.boolean(),
+        minCellId: z.string().nullable(),
+        maxCellId: z.string().nullable(),
+        worstMinCellId: z.string().nullable(),
+        worstMaxCellId: z.string().nullable(),
         latestMinCellVoltageV: z.number().nullable(),
         latestMaxCellVoltageV: z.number().nullable(),
         latestSpreadMv: z.number().nullable(),
         latestTimestamp: z.number().nullable(),
+        latestBatteryVoltageV: z.number().nullable(),
+        worstBatteryVoltageV: z.number().nullable(),
         soc: z.number().nullable(),
         socFormatted: z.string().nullable(),
         socCode: z.string().nullable(),
@@ -275,5 +288,6 @@ export const outputSchemas = {
         graphError: z.string().optional(),
       }),
     ),
+    timeZone: z.string().nullable(),
   }),
 } as const;

@@ -8,22 +8,42 @@ export interface SeriesSample {
   ts: number;
   /** Primary value (index 1): the sample, or the bucket mean when min/max are present. */
   value: number;
-  /** Lowest finite number in the point after the timestamp. */
+  /** Bucket minimum when useMinMax sent one; otherwise the primary value. */
   low: number;
-  /** Highest finite number in the point after the timestamp. */
+  /** Bucket maximum when useMinMax sent one; otherwise the primary value. */
   high: number;
+  /** Cell id VRM appends with useMinMax, e.g. "0103". */
+  cellId: string | null;
 }
 
 const COMPACT_SAMPLES = 12;
 const DEFAULT_POINT_CAP = 2_000;
 
-export function formatTimestamp(ts: number): string {
+export function formatTimestamp(ts: number, timeZone?: string | null): string {
   const ms = ts > 1e12 ? ts : ts * 1000;
   const date = new Date(ms);
   if (Number.isNaN(date.getTime())) {
     return String(ts);
   }
-  return date.toISOString();
+  const utc = date.toISOString();
+  if (!timeZone) {
+    return utc;
+  }
+  try {
+    const local = new Intl.DateTimeFormat('sv-SE', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    }).format(date);
+    return `${utc} (${local} ${timeZone})`;
+  } catch {
+    return utc;
+  }
 }
 
 export function formatNumber(value: number): string {
@@ -46,6 +66,11 @@ export function unitFromFormat(formatWithUnit: string | null | undefined): strin
   return stripped.length > 0 ? stripped : null;
 }
 
+function numericAt(point: unknown[], index: number): number | null {
+  const n = point[index];
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
 export function parseSeriesPoint(point: unknown): SeriesSample | null {
   if (!Array.isArray(point) || point.length < 2) {
     return null;
@@ -54,23 +79,28 @@ export function parseSeriesPoint(point: unknown): SeriesSample | null {
   if (typeof ts !== 'number' || !Number.isFinite(ts)) {
     return null;
   }
-  const nums: number[] = [];
-  for (let i = 1; i < point.length; i++) {
-    const n = point[i];
-    if (typeof n === 'number' && Number.isFinite(n)) {
-      nums.push(n);
-    }
-  }
-  if (nums.length === 0) {
+  const value = numericAt(point, 1);
+  if (value === null) {
     return null;
   }
-  const primary = point[1];
-  const value = typeof primary === 'number' && Number.isFinite(primary) ? primary : nums[0]!;
+  // useMinMax points are [ts, mean, bucketMin, bucketMax, cellId?].
+  // A string such as "0103" is a cell id, not a voltage.
+  const bucketMin = numericAt(point, 2);
+  const bucketMax = numericAt(point, 3);
+  let cellId: string | null = null;
+  for (let i = 1; i < point.length; i++) {
+    const item = point[i];
+    if (typeof item === 'string' && item.trim() !== '') {
+      cellId = item;
+      break;
+    }
+  }
   return {
     ts,
     value,
-    low: Math.min(...nums),
-    high: Math.max(...nums),
+    low: bucketMin ?? value,
+    high: bucketMax ?? value,
+    cellId,
   };
 }
 
@@ -140,11 +170,15 @@ function withUnit(value: number, unit: string | null): string {
   return unit ? `${formatNumber(value)} ${unit}` : formatNumber(value);
 }
 
+function cellSuffix(cellId: string | null | undefined): string {
+  return cellId ? ` cell ${cellId}` : '';
+}
+
 export function formatSeriesBlock(
   label: string,
   rawPoints: unknown,
   formatWithUnit: string | null | undefined,
-  opts?: { includePoints?: boolean; pointCap?: number },
+  opts?: { includePoints?: boolean; pointCap?: number; timeZone?: string | null },
 ): string[] {
   const rawCount = Array.isArray(rawPoints) ? rawPoints.length : 0;
   const samples = parseSeries(rawPoints);
@@ -166,9 +200,10 @@ export function formatSeriesBlock(
     }
   }
   const last = samples[samples.length - 1]!;
-  lines.push(`- min: ${withUnit(min.low, unit)} at ${formatTimestamp(min.ts)}`);
-  lines.push(`- max: ${withUnit(max.high, unit)} at ${formatTimestamp(max.ts)}`);
-  lines.push(`- last: ${withUnit(last.value, unit)} at ${formatTimestamp(last.ts)}`);
+  const zone = opts?.timeZone;
+  lines.push(`- min: ${withUnit(min.low, unit)} at ${formatTimestamp(min.ts, zone)}${cellSuffix(min.cellId)}`);
+  lines.push(`- max: ${withUnit(max.high, unit)} at ${formatTimestamp(max.ts, zone)}${cellSuffix(max.cellId)}`);
+  lines.push(`- last: ${withUnit(last.value, unit)} at ${formatTimestamp(last.ts, zone)}${cellSuffix(last.cellId)}`);
 
   const includePoints = opts?.includePoints === true;
   const cap = opts?.pointCap ?? DEFAULT_POINT_CAP;
@@ -176,14 +211,16 @@ export function formatSeriesBlock(
     const shown = samples.slice(0, cap);
     lines.push(`- points (${shown.length}${shown.length < samples.length ? ` of ${samples.length}` : ''}):`);
     for (const sample of shown) {
-      lines.push(`  ${formatTimestamp(sample.ts)} ${withUnit(sample.value, unit)}`);
+      lines.push(`  ${formatTimestamp(sample.ts, opts?.timeZone)} ${withUnit(sample.value, unit)}${cellSuffix(sample.cellId)}`);
     }
     if (shown.length < samples.length) {
       lines.push(`  … ${samples.length - shown.length} more not shown`);
     }
   } else {
     const compact = pickSamples(samples, COMPACT_SAMPLES);
-    const rendered = compact.map((sample) => `${formatNumber(sample.value)}@${formatTimestamp(sample.ts)}`);
+    const rendered = compact.map(
+      (sample) => `${formatNumber(sample.value)}@${formatTimestamp(sample.ts, opts?.timeZone)}${sample.cellId ? `#${sample.cellId}` : ''}`,
+    );
     lines.push(`- compact (${compact.length} of ${samples.length}): ${rendered.join(', ')}`);
   }
   return lines;
@@ -192,7 +229,7 @@ export function formatSeriesBlock(
 export function formatGraphText(
   idSite: number,
   payload: unknown,
-  opts?: { includePoints?: boolean },
+  opts?: { includePoints?: boolean; timeZone?: string | null },
 ): string {
   const root = (payload ?? {}) as {
     records?: { data?: Record<string, unknown>; meta?: Record<string, unknown>; instance?: unknown };
@@ -203,6 +240,9 @@ export function formatGraphText(
   const lines = [`# Graph data — site ${idSite}`, '', `Series fetched: ${keys.length}`];
   if (typeof root.records?.instance === 'number') {
     lines.push(`Instance: ${root.records.instance}`);
+  }
+  if (opts?.timeZone) {
+    lines.push(`Timezone: ${opts.timeZone}`);
   }
   lines.push('');
   if (keys.length === 0) {
@@ -279,7 +319,12 @@ function formatReadingLine(id: string, reading: Reading): string {
   return `- ${name}${code}: value=${reading.valueText} unit=${unit} formatted=${reading.formatted}`;
 }
 
-export function formatWidgetText(idSite: number, widget: string, payload: unknown): string {
+export function formatWidgetText(
+  idSite: number,
+  widget: string,
+  payload: unknown,
+  opts?: { timeZone?: string | null },
+): string {
   const root = (payload ?? {}) as {
     success?: unknown;
     records?: unknown;
@@ -321,7 +366,7 @@ export function formatWidgetText(idSite: number, widget: string, payload: unknow
     const value = data[key];
     const m = meta ? asMeta(meta[key]) : undefined;
     if (Array.isArray(value)) {
-      series.push(...formatSeriesBlock(seriesLabel(key, m), value, m?.formatWithUnit));
+      series.push(...formatSeriesBlock(seriesLabel(key, m), value, m?.formatWithUnit, { timeZone: opts?.timeZone }));
       rendered.add(key);
       continue;
     }
@@ -402,7 +447,7 @@ function diagnosticRank(record: Record<string, unknown>): number {
   return 2;
 }
 
-export function formatDiagnosticsText(idSite: number, payload: unknown): string {
+export function formatDiagnosticsText(idSite: number, payload: unknown, opts?: { timeZone?: string | null }): string {
   const root = (payload ?? {}) as { records?: unknown };
   const records = Array.isArray(root.records) ? root.records : root.records && isObject(root.records) ? [root.records] : [];
   const rows = records.filter(isObject);
@@ -411,6 +456,9 @@ export function formatDiagnosticsText(idSite: number, payload: unknown): string 
     '',
     `Diagnostic entries: ${Array.isArray(root.records) ? root.records.length : rows.length > 0 ? rows.length : 'n/a'}`,
   ];
+  if (opts?.timeZone) {
+    lines.push(`Timezone: ${opts.timeZone}`);
+  }
   if (rows.length === 0) {
     return lines.join('\n');
   }
@@ -427,9 +475,10 @@ export function formatDiagnosticsText(idSite: number, payload: unknown): string 
     const rawText = raw === undefined || raw === null ? '' : ` raw=${typeof raw === 'number' ? formatNumber(raw) : String(raw)}`;
     const formattedText =
       formatted === undefined || formatted === null ? '' : ` formatted=${typeof formatted === 'string' ? formatted : String(formatted)}`;
+    const when = typeof row['timestamp'] === 'number' ? ` at ${formatTimestamp(row['timestamp'], opts?.timeZone)}` : '';
     const deviceText = device ? ` ${device}` : '';
     const descText = description ? ` ${description}` : '';
-    lines.push(`- instance ${instance}${deviceText} \`${code}\`${descText}:${rawText}${formattedText}`);
+    lines.push(`- instance ${instance}${deviceText} \`${code}\`${descText}:${rawText}${formattedText}${when}`);
   }
   if (ranked.length > shown.length) {
     lines.push(`- … and ${ranked.length - shown.length} more`);
@@ -444,9 +493,12 @@ function isStatsSeriesMap(records: unknown): records is Record<string, unknown> 
   return Object.values(records).every((value) => Array.isArray(value) || typeof value === 'boolean' || value === null);
 }
 
-export function formatStatsText(idSite: number, payload: unknown): string {
+export function formatStatsText(idSite: number, payload: unknown, opts?: { timeZone?: string | null }): string {
   const root = (payload ?? {}) as { success?: unknown; records?: unknown };
   const lines = [`# Stats — site ${idSite}`, '', `success: ${String(root.success)}`];
+  if (opts?.timeZone) {
+    lines.push(`Timezone: ${opts.timeZone}`);
+  }
   if (!isStatsSeriesMap(root.records)) {
     return lines.join('\n');
   }
@@ -458,7 +510,7 @@ export function formatStatsText(idSite: number, payload: unknown): string {
       lines.push(`- \`${key}\`: no data`);
       continue;
     }
-    const block = formatSeriesBlock(`\`${key}\``, value, null);
+    const block = formatSeriesBlock(`\`${key}\``, value, null, { timeZone: opts?.timeZone });
     lines.push(...block);
     lines.push('');
   }

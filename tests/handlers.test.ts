@@ -198,8 +198,9 @@ describe('Handlers build the VRM request correctly', () => {
       end: 2000,
       attributeCodes: ['bs', 'bv'],
     });
-    expect(vrmCalls).toHaveLength(1);
-    const q = vrmCalls[0].url.searchParams;
+    const statsCall = vrmCalls.find((call) => call.url.pathname.endsWith('/stats'));
+    expect(statsCall).toBeDefined();
+    const q = statsCall!.url.searchParams;
     expect(q.get('datatype')).toBe('custom');
     expect(q.get('interval')).toBe('hours');
     expect(q.get('start')).toBe('1000');
@@ -465,6 +466,16 @@ describe('Text carries the numbers, and real payload shapes validate', () => {
     expect(text).toMatch(/3\.35 V/);
   });
 
+  it('vrm_widget_graph accepts a string cell id on useMinMax points', async () => {
+    vrmRoute = () => fixture('widget_graph_cell_id');
+    const { result, text } = await callTool('vrm_widget_graph', { idSite: 216772, instance: 512, useMinMax: true });
+    expect(result.isError, text).toBeFalsy();
+    expect(text).toMatch(/cell 0103/);
+    expect(text).toMatch(/cell 0201/);
+    expect(text).toMatch(/2\.78 V/);
+    expect(text).toMatch(/3\.56 V/);
+  });
+
   it('vrm_widget text includes value, unit, and formatted value', async () => {
     vrmRoute = () => ({
       success: true,
@@ -492,10 +503,11 @@ describe('Text carries the numbers, and real payload shapes validate', () => {
     expect(result.isError, text).toBeFalsy();
     expect(vrmCalls[0].url.searchParams.get('instance')).toBe('512');
 
+    const callsBeforeReject = vrmCalls.length;
     const rejected = await callTool('vrm_widget', { idSite: 1, widget: 'LithiumBMS', instance: 65536 });
     expect(rejected.result.isError).toBe(true);
     expect(rejected.text).toMatch(/Input validation|Too big|65535/);
-    expect(vrmCalls).toHaveLength(1);
+    expect(vrmCalls).toHaveLength(callsBeforeReject);
   });
 
   it('vrm_get_stats, overview, diagnostics, and data-attribute tools accept real shapes', async () => {
@@ -566,12 +578,12 @@ describe('Text carries the numbers, and real payload shapes validate', () => {
     const { result, text } = await callTool('vrm_battery_cell_spread', { idSite: 219742, hours: 24 });
     expect(result.isError, text).toBeFalsy();
     expect(vrmCalls.every((call) => call.method === 'GET')).toBe(true);
-    expect(vrmCalls.map((call) => call.url.pathname)).toEqual([
-      '/v2/installations/219742/diagnostics',
-      '/v2/installations/219742/widgets/Graph',
-    ]);
-    expect(vrmCalls[1].url.searchParams.get('instance')).toBe('512');
-    expect(vrmCalls[1].url.searchParams.getAll('attributeCodes[]').sort()).toEqual(['McV', 'mcV']);
+    expect(vrmCalls[0].url.pathname).toBe('/v2/installations/219742/diagnostics');
+    const graphCall = vrmCalls.find((call) => call.url.pathname.endsWith('/widgets/Graph'));
+    expect(graphCall).toBeDefined();
+    expect(graphCall!.url.searchParams.get('instance')).toBe('512');
+    expect(graphCall!.url.searchParams.get('useMinMax')).toBe('1');
+    expect(graphCall!.url.searchParams.getAll('attributeCodes[]').sort()).toEqual(['McV', 'V', 'bv', 'mcV']);
     expect(text).toMatch(/spread: 300 mV/);
     expect(text).toMatch(/largest simultaneous spread: 300 mV/);
     expect(text).toMatch(/latest SOC: 59\.0 %/);

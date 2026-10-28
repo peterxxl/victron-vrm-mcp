@@ -13,6 +13,7 @@ import {
   sitePath,
 } from './helpers.js';
 import { formatNumber, formatTimestamp, parseSeries, type SeriesSample } from './present.js';
+import { lookupSiteTimeZone } from './site_time.js';
 
 /**
  * Read-only cell-voltage spread. Discovery is GET /diagnostics (attribute
@@ -159,6 +160,15 @@ function isSoc(record: DiagnosticRecord): boolean {
   return path === '/Soc' || path.endsWith('/Soc');
 }
 
+function isBatteryVoltage(record: DiagnosticRecord): boolean {
+  const code = record.code ?? '';
+  if (code === 'V' || code === 'bv') {
+    return true;
+  }
+  const path = (record.dbusPath ?? '').toLowerCase();
+  return path.endsWith('/dc/0/voltage');
+}
+
 interface Snapshot {
   value: number | null;
   formatted: string | null;
@@ -186,11 +196,13 @@ export interface BatteryGroup {
   min: Snapshot | null;
   max: Snapshot | null;
   soc: Snapshot | null;
+  voltage: Snapshot | null;
 }
 
 export function groupCellBatteries(records: DiagnosticRecord[], instanceFilter?: number): BatteryGroup[] {
   const byInstance = new Map<number, BatteryGroup>();
   const socRows: DiagnosticRecord[] = [];
+  const voltageRows: DiagnosticRecord[] = [];
 
   for (const record of records) {
     if (typeof record.instance !== 'number' || !Number.isInteger(record.instance)) {
@@ -207,6 +219,7 @@ export function groupCellBatteries(records: DiagnosticRecord[], instanceFilter?:
         min: null,
         max: null,
         soc: null,
+        voltage: null,
       };
       const shot = snapshot(record);
       const current = kind === 'min' ? group.min : group.max;
@@ -226,6 +239,10 @@ export function groupCellBatteries(records: DiagnosticRecord[], instanceFilter?:
     }
     if (isSoc(record)) {
       socRows.push(record);
+      continue;
+    }
+    if (isBatteryVoltage(record)) {
+      voltageRows.push(record);
     }
   }
 
@@ -247,6 +264,22 @@ export function groupCellBatteries(records: DiagnosticRecord[], instanceFilter?:
       }
     }
     group.soc = best ? snapshot(best) : null;
+    const voltages = voltageRows.filter((row) => row.instance === group.instance);
+    let bestVoltage: DiagnosticRecord | null = null;
+    let bestVoltageScore = Number.POSITIVE_INFINITY;
+    for (const row of voltages) {
+      if (snapshot(row).value === null) {
+        continue;
+      }
+      const codeScore = row.code === 'V' ? 0 : row.code === 'bv' ? 1 : 2;
+      const ts = typeof row.timestamp === 'number' ? row.timestamp : 0;
+      const score = codeScore * 1e15 - ts;
+      if (score < bestVoltageScore) {
+        bestVoltage = row;
+        bestVoltageScore = score;
+      }
+    }
+    group.voltage = bestVoltage ? snapshot(bestVoltage) : null;
   }
 
   return [...byInstance.values()].sort((a, b) => a.instance - b.instance);
@@ -260,29 +293,59 @@ function toSeconds(ts: number): number {
   return ts > 1e12 ? ts / 1000 : ts;
 }
 
-export function largestSimultaneousSpread(
-  minSeries: SeriesSample[],
-  maxSeries: SeriesSample[],
-): { spreadMv: number | null; at: number | null; aligned: number } {
+export function medianStepSeconds(samples: SeriesSample[]): number | null {
+  if (samples.length < 2) {
+    return null;
+  }
+  const sorted = [...samples].sort((a, b) => a.ts - b.ts);
+  const steps: number[] = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const delta = toSeconds(sorted[i]!.ts) - toSeconds(sorted[i - 1]!.ts);
+    if (delta > 0) {
+      steps.push(delta);
+    }
+  }
+  if (steps.length === 0) {
+    return null;
+  }
+  steps.sort((a, b) => a - b);
+  const mid = Math.floor(steps.length / 2);
+  const median = steps.length % 2 === 1 ? steps[mid]! : (steps[mid - 1]! + steps[mid]!) / 2;
+  return Math.round(median);
+}
+
+interface AlignedSpread {
+  spreadMv: number | null;
+  at: number | null;
+  aligned: number;
+  minCellId: string | null;
+  maxCellId: string | null;
+}
+
+export function largestSimultaneousSpread(minSeries: SeriesSample[], maxSeries: SeriesSample[]): AlignedSpread {
+  const empty: AlignedSpread = { spreadMv: null, at: null, aligned: 0, minCellId: null, maxCellId: null };
   if (minSeries.length === 0 || maxSeries.length === 0) {
-    return { spreadMv: null, at: null, aligned: 0 };
+    return empty;
   }
   const maxByTs = new Map<number, SeriesSample>();
   for (const sample of maxSeries) {
     maxByTs.set(sample.ts, sample);
   }
-  let best: { delta: number; ts: number } | null = null;
+  let best: { delta: number; ts: number; minCellId: string | null; maxCellId: string | null } | null = null;
   let aligned = 0;
-  const consider = (delta: number, ts: number) => {
+  const consider = (minSample: SeriesSample, maxSample: SeriesSample, ts: number) => {
+    // Bucket min of mcV against bucket max of McV. Inside a wide bucket those
+    // extremes are not necessarily the same instant.
+    const delta = maxSample.high - minSample.low;
     aligned += 1;
     if (!best || delta > best.delta) {
-      best = { delta, ts };
+      best = { delta, ts, minCellId: minSample.cellId, maxCellId: maxSample.cellId };
     }
   };
   for (const sample of minSeries) {
     const match = maxByTs.get(sample.ts);
     if (match) {
-      consider(match.value - sample.value, sample.ts);
+      consider(sample, match, sample.ts);
     }
   }
   if (aligned === 0) {
@@ -298,15 +361,44 @@ export function largestSimultaneousSpread(
       }
       const partner = maxSorted[j]!;
       if (Math.abs(toSeconds(partner.ts) - toSeconds(sample.ts)) <= ALIGN_TOLERANCE_SEC) {
-        consider(partner.value - sample.value, sample.ts);
+        consider(sample, partner, sample.ts);
       }
     }
   }
   if (!best) {
-    return { spreadMv: null, at: null, aligned: 0 };
+    return empty;
   }
-  const winner: { delta: number; ts: number } = best;
-  return { spreadMv: spreadMillivolts(winner.delta), at: winner.ts, aligned };
+  const winner: { delta: number; ts: number; minCellId: string | null; maxCellId: string | null } = best;
+  return {
+    spreadMv: spreadMillivolts(winner.delta),
+    at: winner.ts,
+    aligned,
+    minCellId: winner.minCellId,
+    maxCellId: winner.maxCellId,
+  };
+}
+
+export function voltageAt(series: SeriesSample[], ts: number, toleranceSec = ALIGN_TOLERANCE_SEC): number | null {
+  if (series.length === 0) {
+    return null;
+  }
+  const exact = series.find((sample) => sample.ts === ts);
+  if (exact) {
+    return exact.value;
+  }
+  let best: SeriesSample | null = null;
+  let bestDt = Number.POSITIVE_INFINITY;
+  for (const sample of series) {
+    const dt = Math.abs(toSeconds(sample.ts) - toSeconds(ts));
+    if (dt < bestDt) {
+      best = sample;
+      bestDt = dt;
+    }
+  }
+  if (!best || bestDt > toleranceSec) {
+    return null;
+  }
+  return best.value;
 }
 
 export interface SpreadResult {
@@ -320,6 +412,12 @@ export interface SpreadResult {
   alignedSamples: number;
   seriesSamples: { min: number; max: number };
   source: 'graph' | 'diagnostics';
+  bucketSeconds: number | null;
+  simultaneousSpreadUpperBound: boolean;
+  minCellId: string | null;
+  maxCellId: string | null;
+  worstMinCellId: string | null;
+  worstMaxCellId: string | null;
 }
 
 export function computeSpread(minSeries: SeriesSample[], maxSeries: SeriesSample[], latestMin: number | null, latestMax: number | null): SpreadResult {
@@ -340,6 +438,7 @@ export function computeSpread(minSeries: SeriesSample[], maxSeries: SeriesSample
     const minV = minSample ? minSample.low : latestMin;
     const maxV = maxSample ? maxSample.high : latestMax;
     const simultaneous = largestSimultaneousSpread(minSeries, maxSeries);
+    const bucketSeconds = medianStepSeconds(minSeries.length >= 2 ? minSeries : maxSeries);
     return {
       minCellVoltageV: minV,
       minCellVoltageAt: minSample ? minSample.ts : null,
@@ -351,6 +450,12 @@ export function computeSpread(minSeries: SeriesSample[], maxSeries: SeriesSample
       alignedSamples: simultaneous.aligned,
       seriesSamples,
       source: 'graph',
+      bucketSeconds,
+      simultaneousSpreadUpperBound: bucketSeconds !== null && bucketSeconds > 60,
+      minCellId: minSample?.cellId ?? null,
+      maxCellId: maxSample?.cellId ?? null,
+      worstMinCellId: simultaneous.minCellId,
+      worstMaxCellId: simultaneous.maxCellId,
     };
   }
   const spread = latestMin !== null && latestMax !== null ? spreadMillivolts(latestMax - latestMin) : null;
@@ -365,6 +470,12 @@ export function computeSpread(minSeries: SeriesSample[], maxSeries: SeriesSample
     alignedSamples: spread === null ? 0 : 1,
     seriesSamples,
     source: 'diagnostics',
+    bucketSeconds: null,
+    simultaneousSpreadUpperBound: false,
+    minCellId: null,
+    maxCellId: null,
+    worstMinCellId: null,
+    worstMaxCellId: null,
   };
 }
 
@@ -397,8 +508,8 @@ function fmtMv(value: number | null): string {
   return value === null ? 'n/a' : `${formatNumber(value)} mV`;
 }
 
-function fmtAt(ts: number | null): string {
-  return ts === null ? '' : ` at ${formatTimestamp(ts)}`;
+function fmtAt(ts: number | null, timeZone?: string | null): string {
+  return ts === null ? '' : ` at ${formatTimestamp(ts, timeZone)}`;
 }
 
 export interface BatterySpreadRow {
@@ -414,15 +525,27 @@ export interface BatterySpreadRow {
   alignedSamples: number;
   seriesSamples: { min: number; max: number };
   source: 'graph' | 'diagnostics';
+  bucketSeconds: number | null;
+  simultaneousSpreadUpperBound: boolean;
+  minCellId: string | null;
+  maxCellId: string | null;
+  worstMinCellId: string | null;
+  worstMaxCellId: string | null;
   latestMinCellVoltageV: number | null;
   latestMaxCellVoltageV: number | null;
   latestSpreadMv: number | null;
   latestTimestamp: number | null;
+  latestBatteryVoltageV: number | null;
+  worstBatteryVoltageV: number | null;
   soc: number | null;
   socFormatted: string | null;
   socCode: string | null;
   socInstance: number | null;
   graphError?: string;
+}
+
+function cellNote(cellId: string | null): string {
+  return cellId ? ` cell ${cellId}` : '';
 }
 
 export function formatBatterySpreadText(summary: {
@@ -431,6 +554,7 @@ export function formatBatterySpreadText(summary: {
   batteries: BatterySpreadRow[];
   diagnosticsRecords: number;
   truncated: boolean;
+  timeZone?: string | null;
 }): string {
   const lines = [
     `# Battery cell spread — site ${summary.idSite} — last ${summary.hours} h`,
@@ -438,6 +562,9 @@ export function formatBatterySpreadText(summary: {
     `Diagnostics rows scanned: ${summary.diagnosticsRecords}${summary.truncated ? ' (truncated)' : ''}`,
     `Batteries with cell-voltage attributes: ${summary.batteries.length}`,
   ];
+  if (summary.timeZone) {
+    lines.push(`Timezone: ${summary.timeZone}`);
+  }
   if (summary.batteries.length === 0) {
     lines.push('', 'No mcV/McV (minimum/maximum cell voltage) attributes were found in diagnostics.');
     return lines.join('\n');
@@ -449,20 +576,39 @@ export function formatBatterySpreadText(summary: {
   });
   for (const battery of ordered) {
     const name = battery.device ? ` — ${battery.device}` : '';
+    const zone = summary.timeZone;
+    const bucket =
+      battery.bucketSeconds === null ? 'n/a' : `${battery.bucketSeconds} s`;
+    const upper = battery.simultaneousSpreadUpperBound
+      ? `; upper bound — buckets are ${battery.bucketSeconds} s, so the min and max in a bucket may not be the same instant`
+      : '';
+    const worstCells =
+      battery.worstMinCellId || battery.worstMaxCellId
+        ? ` cells ${battery.worstMinCellId ?? '?'}/${battery.worstMaxCellId ?? '?'}`
+        : '';
     lines.push('', `## instance ${battery.instance}${name}`);
-    lines.push(`- max cell voltage: ${fmtVolts(battery.maxCellVoltageV)}${fmtAt(battery.maxCellVoltageAt)}`);
-    lines.push(`- min cell voltage: ${fmtVolts(battery.minCellVoltageV)}${fmtAt(battery.minCellVoltageAt)}`);
-    lines.push(`- spread: ${fmtMv(battery.spreadMv)} (envelope over the window)`);
+    lines.push(`- bucket resolution: ${bucket}`);
     lines.push(
-      `- largest simultaneous spread: ${fmtMv(battery.largestSimultaneousSpreadMv)}${fmtAt(battery.largestSimultaneousSpreadAt)} (${battery.alignedSamples} aligned sample(s))`,
+      `- max cell voltage: ${fmtVolts(battery.maxCellVoltageV)}${fmtAt(battery.maxCellVoltageAt, zone)}${cellNote(battery.maxCellId)}`,
     );
+    lines.push(
+      `- min cell voltage: ${fmtVolts(battery.minCellVoltageV)}${fmtAt(battery.minCellVoltageAt, zone)}${cellNote(battery.minCellId)}`,
+    );
+    lines.push(`- spread: ${fmtMv(battery.spreadMv)} (envelope over the window, bucket min of mcV and bucket max of McV)`);
+    lines.push(
+      `- largest simultaneous spread: ${fmtMv(battery.largestSimultaneousSpreadMv)}${fmtAt(battery.largestSimultaneousSpreadAt, zone)}${worstCells} (${battery.alignedSamples} aligned sample(s)${upper})`,
+    );
+    lines.push(
+      `- battery voltage at worst spread: ${fmtVolts(battery.worstBatteryVoltageV)}${fmtAt(battery.largestSimultaneousSpreadAt, zone)}`,
+    );
+    lines.push(`- latest battery voltage: ${fmtVolts(battery.latestBatteryVoltageV)}`);
     const socText =
       battery.soc === null
         ? 'n/a'
         : `${battery.socFormatted ?? `${formatNumber(battery.soc)} %`} (code ${battery.socCode ?? '?'}, instance ${battery.socInstance ?? '?'})`;
     lines.push(`- latest SOC: ${socText}`);
     lines.push(
-      `- latest snapshot: min ${fmtVolts(battery.latestMinCellVoltageV)}, max ${fmtVolts(battery.latestMaxCellVoltageV)}, spread ${fmtMv(battery.latestSpreadMv)}`,
+      `- latest snapshot: min ${fmtVolts(battery.latestMinCellVoltageV)}, max ${fmtVolts(battery.latestMaxCellVoltageV)}, spread ${fmtMv(battery.latestSpreadMv)}${fmtAt(battery.latestTimestamp, zone)}`,
     );
     lines.push(`- source: ${battery.source}; graph samples min=${battery.seriesSamples.min} max=${battery.seriesSamples.max}`);
     if (battery.graphError) {
@@ -483,7 +629,8 @@ async function loadGraph(
     instance,
     start,
     end,
-    'attributeCodes[]': ['mcV', 'McV'],
+    useMinMax: 1,
+    'attributeCodes[]': ['mcV', 'McV', 'V', 'bv'],
   });
 }
 
@@ -495,8 +642,9 @@ export function registerBatteryTools(server: McpServer): void {
       description:
         'Read-only cell-voltage spread for one installation over a recent window (default 24 h). ' +
         'Finds battery instances that report minimum and maximum cell voltage (codes mcV and McV, including CAN-bus BMS instances such as 512) via GET /installations/{idSite}/diagnostics, ' +
-        'then reads those attributes from GET /installations/{idSite}/widgets/Graph. ' +
-        'Returns each battery\'s max cell voltage, min cell voltage, envelope spread in mV, the largest simultaneous (McV−mcV) spread, and the latest state of charge. GET only.',
+        'then reads those attributes from GET /installations/{idSite}/widgets/Graph with useMinMax=1, using each bucket\'s minimum mcV and maximum McV. ' +
+        'When buckets are longer than one minute, the same-time spread is an upper bound. ' +
+        'Returns max cell voltage, min cell voltage, envelope spread in mV, the worst same-time spread, bucket resolution, battery voltage, and the latest state of charge. GET only.',
       inputSchema: {
         idSite: idSiteSchema,
         hours: z
@@ -535,9 +683,19 @@ export function registerBatteryTools(server: McpServer): void {
           const latestTimestamp = Math.max(group.min?.timestamp ?? 0, group.max?.timestamp ?? 0) || null;
           let spread = computeSpread([], [], latestMin, latestMax);
           let graphError: string | undefined;
+          let worstBatteryVoltageV: number | null = null;
           try {
             const graph = await loadGraph(auth.client, idSite, group.instance, start, end);
-            spread = computeSpread(seriesForCode(graph, 'mcV'), seriesForCode(graph, 'McV'), latestMin, latestMax);
+            const minSeries = seriesForCode(graph, 'mcV');
+            const maxSeries = seriesForCode(graph, 'McV');
+            spread = computeSpread(minSeries, maxSeries, latestMin, latestMax);
+            const voltageSeries = seriesForCode(graph, 'V');
+            const altVoltage = seriesForCode(graph, 'bv');
+            const volts = voltageSeries.length > 0 ? voltageSeries : altVoltage;
+            if (spread.largestSimultaneousSpreadAt !== null) {
+              const tolerance = Math.max(spread.bucketSeconds ?? 0, ALIGN_TOLERANCE_SEC);
+              worstBatteryVoltageV = voltageAt(volts, spread.largestSimultaneousSpreadAt, tolerance);
+            }
           } catch (error) {
             graphError = error instanceof VrmApiError ? `VRM API ${error.status}` : error instanceof Error ? error.message : String(error);
           }
@@ -549,6 +707,8 @@ export function registerBatteryTools(server: McpServer): void {
             latestMaxCellVoltageV: latestMax,
             latestSpreadMv: latestSpread,
             latestTimestamp,
+            latestBatteryVoltageV: group.voltage?.value ?? null,
+            worstBatteryVoltageV,
             soc: group.soc?.value ?? null,
             socFormatted: group.soc?.formatted ?? null,
             socCode: group.soc?.code ?? null,
@@ -556,9 +716,11 @@ export function registerBatteryTools(server: McpServer): void {
             ...(graphError ? { graphError } : {}),
           });
         }
+        const timeZone = await lookupSiteTimeZone(auth.client, idSite);
         const summary = {
           success: true as const,
           idSite,
+          timeZone,
           hours: windowHours,
           start,
           end,

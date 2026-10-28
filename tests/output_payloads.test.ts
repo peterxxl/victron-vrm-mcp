@@ -52,9 +52,10 @@ describe('output schemas accept observed VRM payloads', () => {
     accepts(outputSchemas.dataAttributeCatalog, { success: true, records: [{ code: 'bs' }] });
   });
 
-  it('graph — useMinMax points may end in null', () => {
+  it('graph — useMinMax points may end in null or a string cell id', () => {
     accepts(outputSchemas.widgetGraph, fixture('widget_graph_cells'));
     accepts(outputSchemas.widgetGraph, fixture('widget_graph_bs_bv'));
+    accepts(outputSchemas.widgetGraph, fixture('widget_graph_cell_id'));
   });
 
   it('widget and a minimal success envelope still validate', () => {
