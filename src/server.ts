@@ -15,6 +15,7 @@ import { registerAdminOpsTools } from './tools/admin_ops.js';
 import { registerAuthTools } from './tools/auth.js';
 import { registerCustomWidgetTools } from './tools/custom_widget.js';
 import { registerCapabilitiesTools } from './tools/capabilities.js';
+import { registerBatteryTools } from './tools/battery.js';
 
 const require = createRequire(import.meta.url);
 const { version } = require('../package.json');
@@ -40,6 +41,7 @@ export function createServer(): McpServer {
   registerAuthTools(server);
   registerCustomWidgetTools(server);
   registerCapabilitiesTools(server);
+  registerBatteryTools(server);
 
   return server;
 }

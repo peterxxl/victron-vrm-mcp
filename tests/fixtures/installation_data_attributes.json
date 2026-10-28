@@ -1,0 +1,20 @@
+{
+  "success": true,
+  "records": [
+    {
+      "idSite": 219742,
+      "description": "ESS System",
+      "lastTimestamp": 1793190000,
+      "value_bs": 59
+    }
+  ],
+  "attributes": [
+    {
+      "idDataAttribute": 144,
+      "code": "bs",
+      "dataType": "float",
+      "formatWithUnit": "%.1F %%"
+    }
+  ],
+  "num_records": 1
+}

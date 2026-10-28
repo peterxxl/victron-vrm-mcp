@@ -198,8 +198,9 @@ describe('Handlers build the VRM request correctly', () => {
       end: 2000,
       attributeCodes: ['bs', 'bv'],
     });
-    expect(vrmCalls).toHaveLength(1);
-    const q = vrmCalls[0].url.searchParams;
+    const statsCall = vrmCalls.find((call) => call.url.pathname.endsWith('/stats'));
+    expect(statsCall).toBeDefined();
+    const q = statsCall!.url.searchParams;
     expect(q.get('datatype')).toBe('custom');
     expect(q.get('interval')).toBe('hours');
     expect(q.get('start')).toBe('1000');
@@ -440,5 +441,184 @@ describe('VRM_ALLOWED_SITES blocks handlers before any VRM traffic', () => {
     const { result } = await callTool('vrm_get_alarms', { idSite: 151734 });
     expect(result.isError).toBeFalsy();
     expect(vrmCalls).toHaveLength(1);
+  });
+});
+
+describe('Text carries the numbers, and real payload shapes validate', () => {
+  it('vrm_widget_graph text includes min, max, and last for each series', async () => {
+    const graph = fixture('widget_graph_bs_bv');
+    vrmRoute = () => graph;
+    const { result, text } = await callTool('vrm_widget_graph', { idSite: 1, attributeIds: [143, 144] });
+    expect(result.isError).toBeFalsy();
+    expect(text).toMatch(/min: /);
+    expect(text).toMatch(/max: /);
+    expect(text).toMatch(/last: /);
+    expect(text).toMatch(/compact \(/);
+    expect(result.structuredContent).toEqual(graph);
+  });
+
+  it('vrm_widget_graph accepts a useMinMax payload whose points contain null', async () => {
+    vrmRoute = () => fixture('widget_graph_cells');
+    const { result, text } = await callTool('vrm_widget_graph', { idSite: 1, instance: 1, useMinMax: true });
+    expect(result.isError, text).toBeFalsy();
+    expect(text).toMatch(/Minimum cell voltage/);
+    expect(text).toMatch(/3\.3 V/);
+    expect(text).toMatch(/3\.35 V/);
+  });
+
+  it('vrm_widget_graph accepts a string cell id on useMinMax points', async () => {
+    vrmRoute = () => fixture('widget_graph_cell_id');
+    const { result, text } = await callTool('vrm_widget_graph', { idSite: 216772, instance: 512, useMinMax: true });
+    expect(result.isError, text).toBeFalsy();
+    expect(text).toMatch(/cell 0103/);
+    expect(text).toMatch(/cell 0201/);
+    expect(text).toMatch(/2\.78 V/);
+    expect(text).toMatch(/3\.56 V/);
+  });
+
+  it('vrm_widget text includes value, unit, and formatted value', async () => {
+    vrmRoute = () => ({
+      success: true,
+      records: {
+        data: {
+          '173': {
+            code: 'mcV',
+            dataAttributeName: 'Minimum cell voltage',
+            valueFloat: 3.3,
+            formatWithUnit: '%.2F V',
+            valueFormattedWithUnit: '3.30 V',
+          },
+        },
+        meta: {},
+      },
+    });
+    const { result, text } = await callTool('vrm_widget', { idSite: 151755, widget: 'LithiumBMS', instance: 1 });
+    expect(result.isError, text).toBeFalsy();
+    expect(text).toMatch(/value=3\.3 unit=V formatted=3\.30 V/);
+    expect(vrmCalls[0].url.searchParams.get('instance')).toBe('1');
+  });
+
+  it('accepts CAN-bus instance 512 and rejects an instance above the sanity cap', async () => {
+    const { result, text } = await callTool('vrm_widget_graph', { idSite: 219742, instance: 512, attributeCodes: ['mcV', 'McV'] });
+    expect(result.isError, text).toBeFalsy();
+    expect(vrmCalls[0].url.searchParams.get('instance')).toBe('512');
+
+    const callsBeforeReject = vrmCalls.length;
+    const rejected = await callTool('vrm_widget', { idSite: 1, widget: 'LithiumBMS', instance: 65536 });
+    expect(rejected.result.isError).toBe(true);
+    expect(rejected.text).toMatch(/Input validation|Too big|65535/);
+    expect(vrmCalls).toHaveLength(callsBeforeReject);
+  });
+
+  it('vrm_get_stats, overview, diagnostics, and data-attribute tools accept real shapes', async () => {
+    vrmRoute = (call) => {
+      if (call.url.pathname.endsWith('/stats')) return fixture('stats_live');
+      if (call.url.pathname.endsWith('/system-overview')) return fixture('system_overview');
+      if (call.url.pathname.endsWith('/diagnostics')) return fixture('diagnostics_cells');
+      if (call.url.pathname.endsWith('/data-attributes')) return fixture('data_attributes_map');
+      if (call.url.pathname.endsWith('/installation-data-attributes')) return fixture('installation_data_attributes');
+      return undefined;
+    };
+    const stats = await callTool('vrm_get_stats', { idSite: 1 });
+    expect(stats.result.isError, stats.text).toBeFalsy();
+    expect(stats.text).toMatch(/min: 13\.38/);
+    expect(stats.result.structuredContent).toEqual(fixture('stats_live'));
+
+    const overview = await callTool('vrm_get_system_overview', { idSite: 151734 });
+    expect(overview.result.isError, overview.text).toBeFalsy();
+    expect(overview.text).toMatch(/instance 288/);
+
+    const diagnostics = await callTool('vrm_get_diagnostics', { idSite: 219742 });
+    expect(diagnostics.result.isError, diagnostics.text).toBeFalsy();
+    expect(diagnostics.text).toMatch(/instance 512/);
+    expect(diagnostics.text).toMatch(/raw=3\.2/);
+
+    const catalog = await callTool('vrm_list_data_attributes', {});
+    expect(catalog.result.isError, catalog.text).toBeFalsy();
+    expect(catalog.text).toMatch(/`mcV`/);
+    expect(catalog.result.structuredContent).toEqual(fixture('data_attributes_map'));
+
+    const found = await callTool('vrm_find_by_data_attributes', { query: 'bs>=50' });
+    expect(found.result.isError, found.text).toBeFalsy();
+    expect(found.text).toMatch(/ESS System/);
+  });
+
+  it('vrm_battery_cell_spread is GET-only and returns envelope plus simultaneous spread', async () => {
+    vrmRoute = (call) => {
+      if (call.url.pathname.endsWith('/diagnostics')) {
+        return {
+          success: true,
+          num_records: 3,
+          records: [
+            { id: 1, code: 'mcV', instance: 512, Device: 'Pylontech battery', rawValue: '3.20', formattedValue: '3.20 V', timestamp: 1000, dbusPath: '/System/MinCellVoltage' },
+            { id: 2, code: 'McV', instance: 512, Device: 'Pylontech battery', rawValue: 3.35, formattedValue: '3.35 V', timestamp: 1000, dbusPath: '/System/MaxCellVoltage' },
+            { id: 3, code: 'SOC', instance: 512, rawValue: 59, formattedValue: '59.0 %', timestamp: 1000, dbusPath: '/Soc' },
+            { id: 4, code: 'liH1', instance: 512, rawValue: 2.5, dbusPath: '/History/MinimumCellVoltage', description: 'History; Min cell-voltage' },
+          ],
+        };
+      }
+      if (call.url.pathname.endsWith('/widgets/Graph')) {
+        return {
+          success: true,
+          records: {
+            data: {
+              '173': [[100, 3.2], [200, 3.1], [300, 3.3]],
+              '174': [[100, 3.3], [200, 3.4], [300, 3.35]],
+            },
+            meta: {
+              '173': { code: 'mcV' },
+              '174': { code: 'McV' },
+            },
+            instance: 512,
+          },
+        };
+      }
+      return undefined;
+    };
+    const { result, text } = await callTool('vrm_battery_cell_spread', { idSite: 219742, hours: 24 });
+    expect(result.isError, text).toBeFalsy();
+    expect(vrmCalls.every((call) => call.method === 'GET')).toBe(true);
+    expect(vrmCalls[0].url.pathname).toBe('/v2/installations/219742/diagnostics');
+    const graphCall = vrmCalls.find((call) => call.url.pathname.endsWith('/widgets/Graph'));
+    expect(graphCall).toBeDefined();
+    expect(graphCall!.url.searchParams.get('instance')).toBe('512');
+    expect(graphCall!.url.searchParams.get('useMinMax')).toBe('1');
+    expect(graphCall!.url.searchParams.getAll('attributeCodes[]').sort()).toEqual(['McV', 'V', 'bv', 'mcV']);
+    expect(text).toMatch(/spread: 300 mV/);
+    expect(text).toMatch(/largest simultaneous spread: 300 mV/);
+    expect(text).toMatch(/latest SOC: 59\.0 %/);
+    const battery = (result.structuredContent!['batteries'] as Array<Record<string, unknown>>)[0]!;
+    expect(battery['instance']).toBe(512);
+    expect(battery['spreadMv']).toBe(300);
+    expect(battery['largestSimultaneousSpreadMv']).toBe(300);
+    expect(battery['largestSimultaneousSpreadAt']).toBe(200);
+    expect(battery['minCellVoltageV']).toBe(3.1);
+    expect(battery['maxCellVoltageV']).toBe(3.4);
+    expect(battery['soc']).toBe(59);
+  });
+
+  it('vrm_battery_cell_spread keeps the diagnostics snapshot when the graph call fails', async () => {
+    vrmRoute = (call) => {
+      if (call.url.pathname.endsWith('/diagnostics')) {
+        return {
+          success: true,
+          num_records: 2,
+          records: [
+            { id: 1, code: 'mcV', instance: 1, Device: 'Lynx', rawValue: 3.2, formattedValue: '3.20 V', timestamp: 50 },
+            { id: 2, code: 'McV', instance: 1, Device: 'Lynx', rawValue: 3.35, formattedValue: '3.35 V', timestamp: 50 },
+          ],
+        };
+      }
+      return new Response(JSON.stringify({ success: false, errors: 'unavailable', error_code: 'error' }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    const { result, text } = await callTool('vrm_battery_cell_spread', { idSite: 1, instance: 1 });
+    expect(result.isError, text).toBeFalsy();
+    expect(text).toMatch(/source: diagnostics/);
+    expect(text).toMatch(/spread: 150 mV/);
+    expect(text).toMatch(/graph: VRM API 500/);
+    expect(vrmCalls.every((call) => call.method === 'GET')).toBe(true);
   });
 });

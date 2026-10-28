@@ -7,6 +7,7 @@ import {
   confirmSchema,
   formatVrmError,
   idSiteSchema,
+  instanceSchema,
   requireConfirm,
   resolveAuth,
   sitePath,
@@ -199,7 +200,7 @@ export function registerAlarmsTools(server: McpServer): void {
       inputSchema: {
         idSite: idSiteSchema,
         idDataAttribute: z.number().int().positive().describe('Data attribute ID bound to the alarm.'),
-        instance: z.number().int().min(0).max(255).describe('Device instance.'),
+        instance: instanceSchema,
         confirm: confirmSchema,
       },
       outputSchema: outputSchemas.successWithIdSite,

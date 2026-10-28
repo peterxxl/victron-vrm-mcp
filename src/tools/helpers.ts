@@ -8,6 +8,23 @@ export const idSiteSchema = z
   .max(Number.MAX_SAFE_INTEGER)
   .describe('VRM installation ID (positive integer). Use vrm_list_installations to discover.');
 
+/**
+ * Sanity cap for a VRM dbus device instance. This is not a uint8: the public
+ * demo ESS installation reports a Pylontech battery at instance 512, Lynx BMS
+ * units use small integers including 0, and VE.Bus / VE.Can devices commonly
+ * sit in 256–289. The VRM OpenAPI types `instance` as an unbounded integer.
+ */
+export const MAX_DEVICE_INSTANCE = 65_535;
+
+export const instanceSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(MAX_DEVICE_INSTANCE)
+  .describe(
+    'VRM/dbus device instance. CAN-bus batteries (Pylontech, Lynx BMS, and similar) are often 512 or higher — not limited to 0–255.',
+  );
+
 export const confirmSchema = z
   .literal(true)
   .optional()

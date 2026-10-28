@@ -65,7 +65,7 @@ afterAll(() => {
 
 describe('Tool catalog', () => {
   it('TOOLS array length equals advertised count (sanity check)', () => {
-    expect(TOOLS.length).toBe(53);
+    expect(TOOLS.length).toBe(54);
     const names = new Set(TOOLS.map((t) => t.name));
     expect(names.size).toBe(TOOLS.length);
   });

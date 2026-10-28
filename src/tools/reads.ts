@@ -10,6 +10,8 @@ import {
 } from './helpers.js';
 import type { QueryValue } from '../vrm/client.js';
 import { outputSchemas } from './output_schemas.js';
+import { formatDiagnosticsText, formatOverviewText, formatStatsText } from './present.js';
+import { lookupSiteTimeZone } from './site_time.js';
 
 interface GenericRead {
   success: boolean;
@@ -26,7 +28,7 @@ export function registerReadsTools(server: McpServer): void {
       description:
         'Retrieve the list of connected devices and their roles for an installation. Endpoint: GET /installations/{idSite}/system-overview.',
       inputSchema: { idSite: idSiteSchema },
-      outputSchema: outputSchemas.success,
+      outputSchema: outputSchemas.systemOverview,
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ idSite }, extra) => {
@@ -38,7 +40,7 @@ export function registerReadsTools(server: McpServer): void {
         assertSiteAllowed(idSite);
         const data = await auth.client.get<GenericRead>(sitePath(idSite, 'system-overview'));
         return {
-          content: [{ type: 'text', text: `# System overview — site ${idSite}\n\nsuccess: ${data.success}\n\n(structured payload available)` }],
+          content: [{ type: 'text', text: formatOverviewText(idSite, data) }],
           structuredContent: data as unknown as Record<string, unknown>,
         };
       } catch (error) {
@@ -54,7 +56,7 @@ export function registerReadsTools(server: McpServer): void {
       description:
         'Per-device diagnostic readings — last known value for every attribute on every device. Endpoint: GET /installations/{idSite}/diagnostics.',
       inputSchema: { idSite: idSiteSchema },
-      outputSchema: outputSchemas.success,
+      outputSchema: outputSchemas.diagnostics,
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ idSite }, extra) => {
@@ -65,9 +67,9 @@ export function registerReadsTools(server: McpServer): void {
       try {
         assertSiteAllowed(idSite);
         const data = await auth.client.get<GenericRead>(sitePath(idSite, 'diagnostics'));
-        const records = (data as { records?: unknown[] }).records ?? [];
+        const timeZone = await lookupSiteTimeZone(auth.client, idSite);
         return {
-          content: [{ type: 'text', text: `# Diagnostics — site ${idSite}\n\nDiagnostic entries: ${Array.isArray(records) ? records.length : 'n/a'}\n` }],
+          content: [{ type: 'text', text: formatDiagnosticsText(idSite, data, { timeZone }) }],
           structuredContent: data as unknown as Record<string, unknown>,
         };
       } catch (error) {
@@ -91,7 +93,7 @@ export function registerReadsTools(server: McpServer): void {
         end: unixTs,
         attributeCodes: z.array(z.string().min(1).max(32)).max(20).optional().describe('Attribute codes when datatype=custom.'),
       },
-      outputSchema: outputSchemas.success,
+      outputSchema: outputSchemas.stats,
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ idSite, datatype, interval, type, start, end, attributeCodes }, extra) => {
@@ -112,8 +114,9 @@ export function registerReadsTools(server: McpServer): void {
           query['attributeCodes[]'] = attributeCodes;
         }
         const data = await auth.client.get<GenericRead>(sitePath(idSite, 'stats'), query);
+        const timeZone = await lookupSiteTimeZone(auth.client, idSite);
         return {
-          content: [{ type: 'text', text: `# Stats — site ${idSite}\n\nsuccess: ${data.success}` }],
+          content: [{ type: 'text', text: formatStatsText(idSite, data, { timeZone }) }],
           structuredContent: data as unknown as Record<string, unknown>,
         };
       } catch (error) {
